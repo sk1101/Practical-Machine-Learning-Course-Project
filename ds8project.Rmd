@@ -1,0 +1,189 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Shrishti Kaushik"
+date: "17/04/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(e1071)
+library(randomForest)
+library(corrplot)
+library(ggplot2)
+library(rattle)
+library(caret)
+library(rpart.plot)
+```
+
+## Project Brief  
+  
+### Background  
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).  
+
+### Data  
+  
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv  
+
+### Goal  
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set.  
+  
+## Data Pre-processing  
+
+First let's load the data and then look at the dimensions of the training data and it's summary.   
+```{r}
+pmltest<-read.csv("C:\\Users\\Shrishti\\Downloads\\pml-testing.csv")
+pmltrain<-read.csv("C:\\Users\\Shrishti\\Downloads\\pml-training.csv")
+str(pmltrain)
+```
+  
+So the training data has 19,622 observations and 160 variables. Also, the first seven variables can be considered irrelevant for predicting our target variable as they only contain information about the user. Therefore we can remove the first seven coloumns from our datset. Let's check for any rows or columns with "NA" values and remove them too.  
+```{r}
+sum(colSums(is.na(pmltrain) | pmltrain=="")!=0)
+pmltrain_c<-pmltrain[,colSums(is.na(pmltrain) | pmltrain=="")==0]
+pmltrain_c<-pmltrain_c[,-c(1:7)]
+```
+  
+Now let's look at the dimensions of our training data.  
+```{r}
+dim(pmltrain_c)
+```
+  
+Now let's divide our trainig data into a validation dataset and training dataset.  
+```{r}
+pmlvalid<-createDataPartition(pmltrain_c$classe,p=0.8,list=FALSE)
+pmlvalid_c<-pmltrain_c[-pmlvalid,]
+pmltrain_c<-pmltrain_c[pmlvalid,]
+```
+  
+Now that we have cleaned our data and partitioned it, let's do some data analysis.  
+
+## Data Analysis  
+
+To analyse our data we will first make a table of the "classe" variable and the we will calculate the correlation between our target variable and other variables. We will also try to see if any strong correlations exist between any of the predictor variables using corrplot package in R.  
+
+```{r}
+table(pmltrain_c$classe)
+```
+```{r}
+a<-apply(pmltrain_c[,c(1:52)],2,function(x) cor(x,as.numeric(pmltrain_c$classe)))
+barchart(a[a>0],xlab = "Correlation",col="green",main="Predictors with a positive correlation with \"classe\"")
+barchart(a[a<0],xlab = "Correlation",main="Predictors with a negative correlation with \"classe\"",col="red")
+```
+  
+From the plots of correlation of the predictors with the variable "classe", we can see that the maximum positive correlation exists with "pitch_forearm" and maximum negative correlation exists with "magnet_bell_Y". Let's look at the exact values of their correlation with "classe".  
+
+```{r}
+corcoef=c(a[which.max(a)],a[which.min(a)])
+corcoef
+```
+  
+It can be observed that both the variables are only slightly correlated to the variable "classe". Now let's look for any closely correlated predictors in our dataset.  
+
+```{r}
+c<-cor(pmltrain_c[,c(1:52)])
+corrplot(c,method = "square",type = "lower")
+```
+  
+From the correlation plot it can be observed that very few variables are strongly correlated with one another. Let's look at these variables. The "findCorrelation" function of "caret" package in R returns a vector of integers corresponding to columns to remove to reduce pair-wise correlations.  
+
+```{r}
+hc<-findCorrelation(c,cutoff = 0.8,names=TRUE)
+hc
+```
+  
+Now let's look these variables correlation with our target variable and observe if any of these variables are highly correlated with the "classe" variable.   
+
+```{r}
+a[hc]
+```
+None of the variables seem to be highly correlated with our target variable. But since the models that we will be using to predict the user's activity are random forest and other non-linear algorithms, they won't be highly with the presence of these variables.  
+
+## Model Building  
+  
+We will be comparing four prediction models in this project. They are:  
+1) Linear Discriminant Analysis (lda)  
+2) Decision Tree  
+3) Knn algorithm  
+4) Random Forest  
+We will be performing a 10-cross validation for all our prediction algorithms and therrfore will use "trainControl" function of  the "caret " package in R. WE will use accuracy to compare all our algorithms.   
+```{r}
+trc<-trainControl(method = "cv",number = 10)
+```
+### 1) Linear Discriminant Analysis (lda)  
+
+First let's build the model and look at its accuracy.   
+```{r}
+ldamod<-train(classe~.,data = pmltrain_c,method="lda",metric="Accuracy",trControl=trc)
+print(ldamod)
+```
+  
+Now let's predict and check the confusion matrix.  
+```{r}
+plda<-predict(ldamod,pmlvalid_c)
+confusionMatrix(plda,pmlvalid_c$classe)
+```
+  
+This algorithm has an accuray of around 70% and high Specificity values for all classes. This means that this model is highly accurate when it comes to correctly identifying a class that the user doesn't belong to. But the sensitivity values are relatively lower. Hence it not as accurate when it comes to correctly identifying a class that the user belongs to.  
+
+### 2) Decision Tree  
+
+Building the model:  
+```{r}
+treemod<-train(classe~.,data = pmltrain_c,method="rpart",metric="Accuracy",trControl=trc)
+fancyRpartPlot(treemod$finalModel)
+```
+  
+Predicting the values and building the confusion matrix:  
+```{r}
+ptree<-predict(treemod,pmlvalid_c)
+confusionMatrix(ptree,pmlvalid_c$classe)
+```
+  
+This model is highly inaccurate. It's accuracy for predicting class "D" is exceptionally bad as it can be observed from both the plot of the decision tree and the confusion matrix. This model has an accuracy of around 49% only.  
+
+### 3) Knn Algorithm  
+
+Building the model:  
+```{r}
+knnmod<-train(classe~.,data = pmltrain_c,method="knn",metric="Accuracy",trControl=trc)
+print(knnmod)
+```
+  
+Predicting and building the confusion matrix:  
+```{r}
+pknn<-predict(knnmod,pmlvalid_c)
+confusionMatrix(pknn,pmlvalid_c$classe)
+```
+  
+This model is far better than the previous models as it has an accuracy of around 92%. Also the confusion matrix looks much better for this model as compared to the models above. All the classes have high values for specificity as well as sensitivity.  
+
+### 4) Random Forest  
+
+Building the model:  
+```{r}
+trcrf<-trainControl(method = "cv",number = 3)
+rfmod<-train(classe~.,data = pmltrain_c,method="rf",metric="Accuracy",trControl=trcrf)
+print(rfmod)
+```
+  
+Predicting and building the confusion matrix:  
+```{r}
+prf<-predict(rfmod,pmlvalid_c)
+confusionMatrix(prf,pmlvalid_c$classe)
+```
+  
+It can be clearly observed that this model has the best accuracy although the model building takes a considerable amount of time as compared to the other models. It has an accuracy of 99% and its confusion matrix shows that it predicts every class almost fully correctly.  
+
+## Conclusion  
+
+Finally we can conclude that the random forest model is the best to predict the "classe" variable. So lets run our model on our test data:  
+```{r}
+finalp<-predict(rfmod,pmltest)
+finalp
+```
